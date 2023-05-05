@@ -1,85 +1,160 @@
-use anyhow::Result;
 use clap::Parser;
-use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use clap::Subcommand;
+use std::path::Path;
+use std::fs::OpenOptions;
+use std::io::Write;
+use  copypasta::{ClipboardContext,ClipboardProvider};
 
-/// Bulk change names of files with index
-#[derive(Parser)]
+#[derive(Parser,Debug)]
+#[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Path to the Directory
-    path: std::path::PathBuf,
-    ///Name to change replace with
-    name: String,
-    /// Starting index of number
-    index: i32,
-    /// Format of file. Example: txt, mp3, png, rs
-    file_format: String,
+   #[command(subcommand)]
+    command: Commands,
 }
 
-impl Cli {
-    fn check_path_validity(&self) -> Result<bool> {
-        if self.path.as_path().is_dir() {
-            return Ok(true);
-        } else {
-            panic!("Path is not a directory. Make sure the path is a directory and not a file and the directory actually exists.")
-        }
-    }
 
-    fn get_all_files_with_format(
-        &self,
-        extension_param: String,
-    ) -> Result<Vec<std::path::PathBuf>> {
-        let mut out: Vec<std::path::PathBuf> = Vec::new();
+#[derive(Subcommand,Debug)]
+enum Commands {
 
-        if self.check_path_validity().unwrap() {
-            for file in fs::read_dir(self.path.as_path()).unwrap() {
-                let file = file.unwrap();
-                let path = file.path();
-                let extension = path
-                    .extension()
-                    .and_then(OsStr::to_str)
-                    .expect("No extension");
-                if extension == extension_param {
-                    out.push(path);
-                }
-            }
-        }
-        Ok(out)
-    }
+    // Initialize everything
+    Init,
 
-    fn rename_files(&self, files: Vec<PathBuf>, extension: String) -> Result<()> {
-        let mut count = 1;
-        for file in files {
-            fs::rename(
-                file,
-                format!(
-                    "{}/{}{}.{}",
-                    self.path.to_str().unwrap(),
-                    self.name,
-                    count,
-                    extension
-                ),
-            )?;
-            count += 1;
-        }
-        Ok(())
-    }
+    // Create a new password
+    Create {
+        #[arg(short,long)]
+        dir: String,
+        // Name/Alias the password is for. You can refer the password through this alias/name.
+        #[arg(short,long)]
+        name: String,
+        // The password
+        #[arg(short,long)]
+        password:String
+    },
 
-    fn start(&self) -> Result<()> {
-        match self.get_all_files_with_format(self.file_format.to_string()) {
-            Ok(files) => {
-                self.rename_files(files, self.file_format.to_string())?;
-            }
-            Err(err) => return Err(err), // lol.
-        }
+    // Outputs the password as well as copies it onto your clipboard
+    GetPassword {
+        #[arg(short,long)]
+        dir: String,
+        
+        #[arg(short,long)]
+        name: String
+    },
 
-        Ok(())
-    }
+    // Delete a password with the given alias/name.
+    Delete {
+        // Main folder of the password
+        dir: String,
+        //Name/Alias of the password
+        name: String
+    },
+
 }
 
-fn main() -> Result<()> {
-    let args = Cli::parse();
-    args.start()?;
+
+fn check_for_init() -> bool {
+     Path::new("./passwords").is_dir() 
+}
+
+fn init() {
+    println!("Initalizing...");        
+   fs::create_dir("./passwords").unwrap();
+    println!("Initalizing Complete.");
+}
+
+fn create(dir:String,name:String,password:String) -> std::io::Result<()> {
+        let name = name.trim();
+        if !check_for_init() {
+        println!("Not Initialized. Running the init command");
+          init();
+        }
+      match OpenOptions::new().append(true).open(format!("./passwords/{}/passwords.txt",dir)){
+        Ok(mut file) => {
+            println!("Found File.");
+            file.write_all(format!("\r\n{} :# {}",name,password).as_bytes())?; 
+        },
+        _=> {
+            println!("File/Directory not found, creating a new one.");
+            fs::create_dir(format!("./passwords/{}",dir))?;
+            println!("Created directory/file.");
+           fs::write(format!("./passwords/{}/passwords.txt",dir),format!("{} :*^$@&#^!* {}",name, password))?;
+            println!("Sucessfully wrote password for name: {name}");
+        }
+    }
+          
+    println!("Great Success!");
     Ok(())
+}
+
+fn return_password(dir:String,name:String) -> std::io::Result<String> {
+    let file = fs::read_to_string(format!("./passwords/{}/passwords.txt",dir))?;
+
+    for line in file.trim().lines() {
+        let line: Vec<&str> = line.split(' ').collect();
+        if line[0].to_owned() == name {
+            return Ok(line[2].to_owned());
+        }
+    }
+    return Ok("No Password for the given name.".to_owned())
+    
+}
+ 
+fn get_password(dir: String, name:String) {
+   match return_password(dir,name) {
+        Ok(password) =>{ 
+            let mut ctx  = ClipboardContext::new().unwrap();
+            ctx.set_contents(password.to_owned()).unwrap();
+            println!("Succesfully copied to clipboard");
+        },
+        Err(err) => panic!("{err}")
+    } 
+}
+
+
+fn delete(dir:String,name:String) -> std::io::Result<()> {
+    let file = fs::read_to_string(format!("./passwords/{}/passwords.txt",dir))?;
+    let mut fin =  "".to_owned();
+    for line in file.lines() {
+        let line: Vec<&str> = line.split(' ').collect();
+        if line[0].to_owned() != name {
+            let mut finline = "".to_owned();
+            for l in line {
+                finline = format!("{}{}",finline,l);
+            }
+            fin = format!("{}\r\n{:?}",fin,finline);
+        } 
+    }
+    fs::write(format!("./passwords/{}/passwords.txt",dir),fin)?;
+    println!("Sucessfully Deleted.");
+    Ok(())
+}
+
+fn main() {
+   let args = Cli::parse();
+   match args.command {
+        Commands::Init => {
+           if !check_for_init() {
+                init()
+            }else {
+                println!("Already Initialized.")
+            }
+        },
+        Commands::Create{dir,name,password} => {
+            let out =  create(dir,name,password); 
+           match out  {
+                Err(er) => println!("Something went wrong trying to create files: {}",er),
+                _=> ()
+            } 
+        },
+        Commands::GetPassword{dir,name} => {
+            get_password(dir,name);
+        },
+        Commands::Delete{dir,name} => {
+            let out = delete(dir,name); 
+            match out {
+            Err(er) => println!("Something went wrong trying to delete: {}",er),
+            _=>()
+        }
+        }
+           }; 
 }

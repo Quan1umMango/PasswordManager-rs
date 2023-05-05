@@ -1,5 +1,5 @@
 [package]
-name = "brute"
+name = "pass"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"]}
-anyhow = "1.0"
+copypasta = "0.8.2"
